@@ -16,6 +16,12 @@
         };
         nodejsMajor = 24;
         port = 32000;
+        development = {
+          packageType = "system";
+          packageId = "flexible-d6";
+          worldId = "flexible-d6-dev";
+          worldTitle = "Flexible D6 Development";
+        };
       };
     in
     {
@@ -23,10 +29,14 @@
         default = env.devShell;
         foundry = env.devShell;
       };
-      apps.${system}.start-foundry = env.app;
+      apps.${system} = {
+        start-foundry = env.app;
+        start-dev = env.devApp;
+      };
       packages.${system} = {
         foundryvtt = env.package;
         start-foundry = env.launcher;
+        start-dev = env.devLauncher;
       };
       formatter.${system} = env.formatter;
     };

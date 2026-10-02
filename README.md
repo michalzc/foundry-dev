@@ -2,7 +2,7 @@
 
 A reusable Nix flake for developing Foundry VTT systems and modules, extracted
 from flexible-d6. Each project owns its exact Foundry version and archive hash;
-this repository owns packaging, Node.js tooling, the launcher, and API links.
+this repository owns packaging, Node.js tooling, the launchers, and API links.
 
 Repository: [michalzc/foundry-dev](https://github.com/michalzc/foundry-dev).
 
@@ -70,8 +70,12 @@ version or hash. Each project can upgrade independently.
 | `port` | `32000` | Default server port, 1–65535 |
 | `extraPackages` | `[]` | Additional Nix derivations for the shell |
 | `shellHook` | `""` | Shell commands appended after API link setup |
+| `development` | `null` | Optional project configuration for `start-dev` (Foundry 14) |
 
 It returns `devShell`, `app`, `package` (Foundry), `launcher`, and `formatter`.
+With `development` configured it also returns `devLauncher` and `devApp`,
+and adds `start-dev` to the shell. Map these to `packages.<system>.start-dev`
+and `apps.<system>.start-dev`, as shown in the project template.
 The template maps these to `devShells.<system>.default` / `.foundry`,
 `apps.<system>.start-foundry`, `packages.<system>.foundryvtt` /
 `.start-foundry`, and `formatter.<system>`.
@@ -114,22 +118,106 @@ symlink at the Git root for editor navigation. Existing real files/directories
 are preserved with a diagnostic. The API files remain read-only in the Nix
 store. Custom hooks run after this setup.
 
-Keep npm dependencies, build scripts, and output linking in the consuming
-project. After building, link a system or module as appropriate (replace the
-example ID and `build` directory):
+## One-command development session
 
-```sh
-mkdir -p foundryvtt-data/Data/systems
-ln -s "$PWD/build" foundryvtt-data/Data/systems/my-system
-# For a module:
-mkdir -p foundryvtt-data/Data/modules
-ln -s "$PWD/build" foundryvtt-data/Data/modules/my-module
+Keep npm dependencies and build scripts in the consuming project. Configure the
+shared launcher in the factory call:
+
+```nix
+development = {
+  packageType = "system";
+  packageId = "my-system";
+  worldId = "my-system-dev";
+  worldTitle = "My System Development";
+};
 ```
 
-Use your configured data directory if overriding `FOUNDRY_DATA_PATH`.
-For flexible-d6, the output directory is `build` and system ID is `flexible-d6`.
-Replacing its flake with the template preserves the existing shell alias,
-launcher, local data directory, API link, and npm workflow.
+For a module, specify its development world's installed system:
+
+```nix
+development = {
+  packageType = "module";
+  packageId = "my-module";
+  worldId = "my-module-dev";
+  worldTitle = "My Module Development";
+  worldSystem = "my-system";
+};
+```
+
+| Development field | Default | Purpose |
+| --- | --- | --- |
+| `packageType` | required | `system` or `module` |
+| `packageId` | required | Package ID used for output linking |
+| `worldId` | required | Development world ID |
+| `worldTitle` | required | Title used when creating the world |
+| `worldSystem` | `packageId` for systems; required for modules | World system ID |
+| `outputDirectory` | `"build"` | Output to link, relative to the Git root or absolute |
+| `buildCommand` | `[ "npm" "run" "build" ]` | Executable and arguments, run before Foundry |
+| `watchCommand` | `[ "npm" "run" "dev" ]` | Executable and arguments for `--watch` |
+| `browserProfile` | `".dev/chromium"` | Persistent profile path, relative to the Git root or absolute |
+| `debugPort` | `9222` | Chromium debugging port, 1024–65535 |
+
+IDs must be lowercase slugs. Command arrays are passed directly to the process;
+there is no shell expansion. Both development ports must be at least 1024 and
+must differ. Paths containing spaces are supported. Add `/.dev/` and your
+Foundry data directory to `.gitignore`.
+
+Install Chromium on the host and npm dependencies once, then run:
+
+```sh
+start-dev
+start-dev --watch
+# Outside the shell:
+nix run .#start-dev
+nix run .#start-dev -- --watch
+```
+
+The generated command uses packaged Node.js and `start-foundry`. It discovers
+`chromium` or `chromium-browser` on PATH; override with `CHROMIUM_BIN`. Run inside
+the consuming project's Git checkout, including from a subdirectory. The
+launcher resolves the checkout at runtime, builds, links the output into
+`Data/systems/<packageId>` or `Data/modules/<packageId>`, starts Foundry, creates
+or reuses the configured world, and opens Chromium's join screen. Existing
+worlds must match the configured ID and system; unrelated package paths are
+preserved and cause an error. Automatic setup supports Foundry 14 only; use
+`start-foundry` for other versions.
+
+| Environment override | Default |
+| --- | --- |
+| `FOUNDRY_PORT` | Factory `port` |
+| `FOUNDRY_WORLD` | `development.worldId` |
+| `FOUNDRY_DATA_PATH` | `foundryvtt-data` at the Git root |
+| `CHROMIUM_BIN` | Host `chromium` or `chromium-browser` |
+| `CHROMIUM_DEBUG_PORT` | `development.debugPort` |
+
+Relative data paths for `start-dev` resolve against the Git root. This differs
+from `start-foundry`, which resolves explicit relative overrides against the
+working directory. CDP binds to loopback; update your browser tooling endpoint
+if changing its port.
+
+Enter the Foundry license and accept its terms in Chromium on first use. If
+setup requires administrator authentication, set `FOUNDRY_ADMIN_PASSWORD` and
+optionally `FOUNDRY_ADMIN_USERNAME`, or create/launch the world manually in
+Chromium. The launcher uses credentials only for its HTTP session and excludes
+them from child environments. Setup waits up to ten minutes. It assumes local
+HTTP without TLS, route prefixes, reverse proxies, or external authentication.
+
+For modules, install the configured world system and required modules first.
+Join the world as GM in Chromium when prompted. The launcher waits up to ten
+minutes, validates the project module and its recursive required module
+dependencies, merges their activation into `core.moduleConfiguration`, reloads
+when necessary, and verifies activation. It preserves other module settings,
+does not download dependencies, and fails on missing or incompatible packages.
+Player credentials are never configured; login remains interactive.
+
+`--watch` starts the configured watcher after initialization. Reload the browser
+after rebuilding. Ctrl+C or closing Chromium ends the session and stops owned
+process groups, with a five-second graceful shutdown period. Occupied server or
+debugging ports are refused. Do not run another Foundry instance using the same
+output during a build, because build commands can replace compendium databases.
+
+Without `development`, the factory and manual `start-foundry` workflow remain
+unchanged. Link built system/module outputs yourself in that workflow.
 
 ## Work on this flake
 
@@ -142,5 +230,8 @@ Checks package synthetic archives using both supported layouts (`main.js` and
 `resources/app/main.js`) with Node.js 22 and 24. They exercise default data
 paths from subdirectories, paths containing spaces, environment overrides,
 argument forwarding, invalid ports, launches outside Git, and API link safety.
-They do not start a licensed Foundry server. The lock file was copied from
+Development checks exercise generated system/module launchers, configuration
+validation, and the Node.js launcher tests, including mocked HTTP and CDP
+activation flows. They do not start a licensed Foundry server.
+Run the runtime tests directly with `node --test tools/start-dev.test.mjs`. The lock file was copied from
 flexible-d6 to preserve its toolchain baseline.

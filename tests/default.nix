@@ -4,6 +4,98 @@
   mkFoundryEnvironment,
 }:
 let
+  replaceDependency =
+    original: replacement: text:
+    builtins.replaceStrings [ (builtins.unsafeDiscardStringContext "${original}") ] [ "${replacement}" ]
+      (
+        builtins.appendContext (builtins.unsafeDiscardStringContext text) (
+          builtins.removeAttrs (builtins.getContext text) [
+            (builtins.unsafeDiscardStringContext original.drvPath)
+            (builtins.unsafeDiscardStringContext original.outPath)
+          ]
+        )
+      );
+  developmentCheck =
+    packageType:
+    let
+      env = mkFoundryEnvironment {
+        inherit system;
+        foundry = {
+          version = "14.999";
+          sha256 = pkgs.lib.fakeHash;
+        };
+        development = {
+          inherit packageType;
+          packageId = "example-package";
+          worldId = "example-world";
+          worldTitle = "Example Development";
+          worldSystem = "example-system";
+          outputDirectory = "output with spaces";
+          buildCommand = [
+            "false"
+            "argument with spaces"
+          ];
+        };
+      };
+      fakeFoundry = pkgs.writeShellScriptBin "start-foundry" "exit 99";
+      configFile = pkgs.writeText "fixture-config.json" (
+        builtins.toJSON (
+          env.devLauncher.config
+          // {
+            foundryLauncher = "${fakeFoundry}/bin/start-foundry";
+          }
+        )
+      );
+      generated = env.devLauncher.overrideAttrs (old: {
+        text = replaceDependency env.launcher fakeFoundry (
+          replaceDependency env.devLauncher.configFile configFile old.text
+        );
+      });
+    in
+    pkgs.runCommand "start-dev-${packageType}-integration"
+      {
+        nativeBuildInputs = [
+          generated
+          pkgs.git
+          pkgs.nodejs_24
+        ];
+      }
+      ''
+        mkdir -p "project with spaces/subdir"
+        start-dev --help | grep 'Usage: start-dev'
+        cd "project with spaces"
+        git init -q
+        cd subdir
+        # Build failure proves root/configuration resolution without starting Foundry.
+        if CHROMIUM_BIN=true start-dev > log 2>&1; then exit 1; fi
+        grep 'Build failed' log
+        if CHROMIUM_BIN=true start-dev --unknown > log 2>&1; then exit 1; fi
+        grep 'Unknown argument' log
+        cd "$TMPDIR"
+        if CHROMIUM_BIN=true start-dev > log 2>&1; then exit 1; fi
+        grep 'inside the project Git checkout' log
+        touch "$out"
+      '';
+  validConfig = {
+    packageType = "module";
+    packageId = "example";
+    worldId = "example-dev";
+    worldTitle = "Example";
+    worldSystem = "example-system";
+  };
+  accepts =
+    development:
+    (builtins.tryEval (
+      builtins.deepSeq
+        (mkFoundryEnvironment {
+          inherit system development;
+          foundry = {
+            version = "14.999";
+            sha256 = pkgs.lib.fakeHash;
+          };
+        }).devLauncher.config
+        true
+    )).success;
   check =
     version: layout:
     let
@@ -80,6 +172,25 @@ let
       '';
 in
 {
+  development-system = developmentCheck "system";
+  development-module = developmentCheck "module";
+  development-config =
+    assert accepts validConfig;
+    assert !(accepts (builtins.removeAttrs validConfig [ "worldSystem" ]));
+    assert !(accepts (validConfig // { packageType = "other"; }));
+    assert !(accepts (validConfig // { packageId = "../escape"; }));
+    assert !(accepts (validConfig // { buildCommand = [ ]; }));
+    assert !(accepts (validConfig // { debugPort = 32000; }));
+    pkgs.runCommand "start-dev-config-validation" { } "touch $out";
+  development-runtime =
+    pkgs.runCommand "start-dev-runtime-tests"
+      {
+        nativeBuildInputs = [ pkgs.nodejs_24 ];
+      }
+      ''
+        node --test ${../tools}/start-dev.test.mjs
+        touch "$out"
+      '';
   foundry-13 = check "13.999" ".";
   foundry-14 = check "14.999" "resources/app";
 }
