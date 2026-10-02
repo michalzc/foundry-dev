@@ -16,12 +16,12 @@ let
         )
       );
   developmentCheck =
-    packageType:
+    packageType: version:
     let
       env = mkFoundryEnvironment {
         inherit system;
         foundry = {
-          version = "14.999";
+          inherit version;
           sha256 = pkgs.lib.fakeHash;
         };
         development = {
@@ -52,7 +52,7 @@ let
         );
       });
     in
-    pkgs.runCommand "start-dev-${packageType}-integration"
+    pkgs.runCommand "start-dev-${packageType}-${version}-integration"
       {
         nativeBuildInputs = [
           generated
@@ -172,8 +172,9 @@ let
       '';
 in
 {
-  development-system = developmentCheck "system";
-  development-module = developmentCheck "module";
+  development-system = developmentCheck "system" "14.999";
+  development-module = developmentCheck "module" "14.999";
+  development-system-13 = developmentCheck "system" "13.999";
   development-config =
     assert accepts validConfig;
     assert !(accepts (builtins.removeAttrs validConfig [ "worldSystem" ]));

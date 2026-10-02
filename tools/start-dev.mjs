@@ -67,7 +67,7 @@ export function foundryClient(base) {
   return async (path, body) => {
     const response = await fetch(`${base}${path}`, {
       method: body ? 'POST' : 'GET',
-      // Foundry 14 rejects POST requests without a matching Origin.
+      // Foundry 14 rejects POST requests without a matching Origin; 13 ignores it.
       headers: { Cookie: cookie, ...(body ? { 'Content-Type': 'application/json', Origin: new URL(base).origin } : {}) },
       body: body ? JSON.stringify(body) : undefined,
       redirect: 'manual',
@@ -77,6 +77,22 @@ export function foundryClient(base) {
     if (session) cookie = session.split(';')[0];
     return response;
   };
+}
+
+export const SUPPORTED_GENERATIONS = [13, 14];
+
+export function generation(version) {
+  const major = Number(String(version).split('.')[0]);
+  if (!SUPPORTED_GENERATIONS.includes(major)) {
+    throw new Error(`start-dev automatic setup supports Foundry ${SUPPORTED_GENERATIONS.join(' and ')}. Use start-foundry for other versions.`);
+  }
+  return major;
+}
+
+// Foundry 13 creates worlds through the setup route; 14 has a dedicated route.
+export function createWorldRequest(major, world, title, system) {
+  const body = { action: 'createWorld', id: world, title, system };
+  return major >= 14 ? ['/create', { ...body, launch: false }] : ['/setup', body];
 }
 
 export async function browserCall(debugPort, base, method, params = {}) {
@@ -192,7 +208,7 @@ export async function main(config, args = process.argv.slice(3)) {
     return;
   }
   if (args.some(arg => arg !== '--watch')) throw new Error('Unknown argument. Use --help.');
-  if (Number(config.foundryVersion.split('.')[0]) !== 14) throw new Error('start-dev automatic setup requires Foundry 14. Use start-foundry for other versions.');
+  const major = generation(config.foundryVersion);
   const ROOT = await repositoryRoot(config.git);
   const env = process.env;
   const chromium = await executable(env.CHROMIUM_BIN ? [env.CHROMIUM_BIN] : ['chromium', 'chromium-browser']);
@@ -313,9 +329,9 @@ export async function main(config, args = process.argv.slice(3)) {
         authenticated = true;
         await request('/auth', { adminPassword: env.FOUNDRY_ADMIN_PASSWORD, adminUsername: env.FOUNDRY_ADMIN_USERNAME ?? null });
       }
-      const response = await request(created ? '/setup' : '/create', created
-        ? { action: 'launchWorld', world }
-        : { action: 'createWorld', id: world, title: config.worldTitle, system: config.worldSystem, launch: false });
+      const response = await request(...(created
+        ? ['/setup', { action: 'launchWorld', world }]
+        : createWorldRequest(major, world, config.worldTitle, config.worldSystem)));
       if (response.status === 401 || response.status === 403) {
         if (prompted !== 'auth') console.log(`Administrator authentication required. Create/launch ${world} in Chromium, or restart with FOUNDRY_ADMIN_PASSWORD set.`);
         prompted = 'auth';

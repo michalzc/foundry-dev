@@ -70,7 +70,7 @@ version or hash. Each project can upgrade independently.
 | `port` | `32000` | Default server port, 1–65535 |
 | `extraPackages` | `[]` | Additional Nix derivations for the shell |
 | `shellHook` | `""` | Shell commands appended after API link setup |
-| `development` | `null` | Optional project configuration for `start-dev` (Foundry 14) |
+| `development` | `null` | Optional project configuration for `start-dev` (Foundry 13 or 14) |
 
 It returns `devShell`, `app`, `package` (Foundry), `launcher`, and `formatter`.
 With `development` configured it also returns `devLauncher` and `devApp`,
@@ -179,7 +179,7 @@ launcher resolves the checkout at runtime, builds, links the output into
 `Data/systems/<packageId>` or `Data/modules/<packageId>`, starts Foundry, creates
 or reuses the configured world, and opens Chromium's join screen. Existing
 worlds must match the configured ID and system; unrelated package paths are
-preserved and cause an error. Automatic setup supports Foundry 14 only; use
+preserved and cause an error. Automatic setup supports Foundry 13 and 14; use
 `start-foundry` for other versions.
 
 | Environment override | Default |

@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { activateModule, enableBrowserModule, executable, foundryClient, linkPackage, main, port } from './start-dev.mjs';
+import { activateModule, createWorldRequest, enableBrowserModule, executable, foundryClient, linkPackage, main, port } from './start-dev.mjs';
 
 async function temporary(t) {
   const root = await mkdtemp(join(tmpdir(), 'foundry dev launcher '));
@@ -69,7 +69,7 @@ test('Foundry HTTP client preserves cookies and sends same-origin POST requests 
   assert.equal((await request('/create', { action: 'createWorld' })).status, 200);
 });
 
-for (const packageType of ['system', 'module']) test(`${packageType} session builds, creates/reuses a world, watches, and cleans up`, { timeout: 30000 }, async t => {
+for (const [packageType, foundryVersion] of [['system', '14.368'], ['module', '14.368'], ['system', '13.351'], ['module', '13.351']]) test(`Foundry ${foundryVersion} ${packageType} session builds, creates/reuses a world, watches, and cleans up`, { timeout: 30000 }, async t => {
   const root = await temporary(t);
   await mkdir(join(root, 'tools'));
   await mkdir(join(root, 'bin'));
@@ -80,7 +80,7 @@ for (const packageType of ['system', 'module']) test(`${packageType} session bui
     packageType, packageId: 'example-package', worldId: 'example-world',
     worldTitle: 'Example Development', worldSystem: 'example-system', outputDirectory: 'output with spaces',
     buildCommand: ['npm', 'compile', '--custom'], watchCommand: ['npm', 'watch', '--custom'],
-    browserProfile: '.dev/chromium', port: 32000, debugPort: 9222, foundryVersion: '14.368',
+    browserProfile: '.dev/chromium', port: 32000, debugPort: 9222, foundryVersion,
     foundryLauncher: join(root, 'bin', 'start-foundry'),
   }));
   await command(join(root, 'bin', 'npm'), `
@@ -106,6 +106,7 @@ const server = http.createServer(async (req, res) => {
   const data = JSON.parse(body);
   fs.appendFileSync('events', data.action + '\\n');
   if (data.action === 'createWorld') {
+    fs.writeFileSync('create-request', JSON.stringify({url: req.url, launch: data.launch ?? null}));
     if (fs.existsSync(manifest)) { res.statusCode = 400; return res.end('{}'); }
     fs.mkdirSync(path.dirname(manifest), {recursive: true});
     fs.writeFileSync(manifest, JSON.stringify({id: data.id, system: data.system, sentinel: 'preserved'}));
@@ -191,6 +192,8 @@ server.listen(port, '127.0.0.1');
   assert.match(events, /watch --custom/);
   const manifest = JSON.parse(await readFile(join(root, 'data/Data/worlds/example-world/world.json'), 'utf8'));
   assert.equal(manifest.sentinel, 'preserved');
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'create-request'), 'utf8')),
+    foundryVersion.startsWith('13.') ? { url: '/setup', launch: null } : { url: '/create', launch: false });
 });
 
 const moduleConfig = { packageId: 'example-module', worldId: 'example-world', worldSystem: 'example-system' };
@@ -383,5 +386,12 @@ test('CDP module startup refuses a settings write that does not persist', async 
 
 
 test('automatic setup rejects unsupported Foundry generations before starting processes', async () => {
-  await assert.rejects(main({ foundryVersion: '13.999' }, []), /requires Foundry 14/);
+  for (const foundryVersion of ['12.343', '15.1']) {
+    await assert.rejects(main({ foundryVersion }, []), /supports Foundry 13 and 14/);
+  }
+});
+
+test('world creation uses the generation-specific setup route', () => {
+  assert.deepEqual(createWorldRequest(13, 'w', 'W', 's'), ['/setup', { action: 'createWorld', id: 'w', title: 'W', system: 's' }]);
+  assert.deepEqual(createWorldRequest(14, 'w', 'W', 's'), ['/create', { action: 'createWorld', id: 'w', title: 'W', system: 's', launch: false }]);
 });
